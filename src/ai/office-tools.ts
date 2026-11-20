@@ -245,6 +245,16 @@ export function buildOfficeTools(context: AgentToolContext<Env>): ToolSet {
       },
     }),
 
+    profile_remove: tool({
+      description: 'OWNER ONLY. Remove one document from the profile knowledge base by item id.',
+      inputSchema: z.object({ id: z.string().min(1).max(256) }),
+      execute: async ({ id }) => {
+        if (userId !== env.OWNER_USER_ID) throw new Error('Forbidden: owner only')
+        await knowledge(env).remove(id)
+        return { removed: id }
+      },
+    }),
+
     profile_list: tool({
       description: 'OWNER ONLY. List documents in the profile knowledge base with indexing status.',
       inputSchema: z.object({}),
