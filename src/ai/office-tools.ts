@@ -15,6 +15,7 @@ import { knowledge } from 'deepspace/worker'
 import type { AgentToolContext } from 'deepspace/worker'
 import { createActionTools } from '../server/action-routes.js'
 import { GITHUB_USER, OFFICE_REPOS, type OfficeAgent } from '../office/agents.js'
+import { keywords } from '../office/keywords.js'
 import type { Env } from '../../worker.js'
 
 const MAX_TEXT = 12_000
@@ -210,14 +211,45 @@ export function buildOfficeTools(context: AgentToolContext<Env>): ToolSet {
     profile_search: tool({
       description:
         "Search Siddharth's resume and personal profile (experience, education, projects, publications, skills, hobbies). Always search before answering a question about him.",
-      inputSchema: z.object({ query: z.string().min(2).max(500) }),
+      inputSchema: z.object({
+        query: z
+          .string()
+          .min(2)
+          .max(500)
+          .describe('Keywords work best, e.g. "hobbies sports music" or "Opti-Mode experience"'),
+      }),
       execute: async ({ query }) => {
-        const result = await knowledge(env).search(query, {
-          folder: KNOWLEDGE_FOLDER,
-          mode: 'hybrid',
-          limit: 6,
-        })
-        return result.chunks.map((c) => ({ source: c.filename ?? c.key, text: c.text }))
+        const kb = knowledge(env).scoped({ folder: KNOWLEDGE_FOLDER })
+        // Observed on the managed index: question-shaped queries ("what sports
+        // does he play?") return nothing — matching behaves like all-terms
+        // keyword search without stemming. So: try the whole query, and if it
+        // misses, run one search per keyword (max 5) and rank files by how
+        // many keywords hit them. ('fulltext' mode returned nothing on this
+        // index in testing, so the per-keyword searches are hybrid too.)
+        const whole = await kb.search(query, { mode: 'hybrid', limit: 3 })
+        if (whole.chunks.length > 0) {
+          return whole.chunks.map((c) => ({ source: c.filename ?? c.key, text: c.text }))
+        }
+        const terms = keywords(query).slice(0, 5)
+        const hits = await Promise.all(
+          terms.map((t) => kb.search(t, { mode: 'hybrid', limit: 3 }).catch(() => ({ chunks: [] }))),
+        )
+        const byKey = new Map<string, { text: string; source: string; score: number }>()
+        for (const r of hits) {
+          for (const c of r.chunks) {
+            const k = c.key ?? c.id
+            const prev = byKey.get(k)
+            byKey.set(k, {
+              text: c.text,
+              source: c.filename ?? k,
+              score: (prev?.score ?? 0) + 1,
+            })
+          }
+        }
+        return [...byKey.values()]
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3)
+          .map(({ source, text }) => ({ source, text }))
       },
     }),
 
@@ -252,6 +284,21 @@ export function buildOfficeTools(context: AgentToolContext<Env>): ToolSet {
         if (userId !== env.OWNER_USER_ID) throw new Error('Forbidden: owner only')
         await knowledge(env).remove(id)
         return { removed: id }
+      },
+    }),
+
+    profile_debug_search: tool({
+      description: 'OWNER ONLY (temporary diagnostics). Raw knowledge search with explicit options.',
+      inputSchema: z.object({
+        query: z.string(),
+        mode: z.enum(['hybrid', 'semantic', 'fulltext']).optional(),
+        matchThreshold: z.number().optional(),
+        queryRewrite: z.boolean().optional(),
+      }),
+      execute: async ({ query, mode, matchThreshold, queryRewrite }) => {
+        if (userId !== env.OWNER_USER_ID) throw new Error('Forbidden: owner only')
+        const r = await knowledge(env).search(query, { mode, matchThreshold, queryRewrite, limit: 5, folder: KNOWLEDGE_FOLDER })
+        return { queryKind: r.queryKind, chunks: r.chunks.map((c) => ({ score: Number(c.score.toFixed(3)), file: c.filename ?? c.key })) }
       },
     }),
 

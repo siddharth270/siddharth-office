@@ -41,10 +41,22 @@ export type InFlightMessage = {
   forChatId: string
 }
 
+/**
+ * Lifecycle of one turn, reported to the parent (the office animates the
+ * agent's character from these). `action` carries every decoded stream event.
+ */
+export type ChatActivity =
+  | { kind: 'start' }
+  | { kind: 'action'; action: AiStreamAction }
+  | { kind: 'end'; ok: boolean }
+
 type UseStreamingChatOptions = {
   chatId: string | null
   modelId?: string
   onChatCreated?: (id: string) => void
+  /** Office agent the auto-created chat is bound to (server-validated). */
+  agentId?: string
+  onActivity?: (activity: ChatActivity) => void
 }
 
 /**
@@ -175,7 +187,15 @@ export function useStreamingChat({
   chatId,
   modelId,
   onChatCreated,
+  agentId,
+  onActivity,
 }: UseStreamingChatOptions) {
+  // Ref so a new callback identity never re-creates `send` mid-turn.
+  const onActivityRef = useRef(onActivity)
+  useEffect(() => {
+    onActivityRef.current = onActivity
+  }, [onActivity])
+  const emit = useCallback((activity: ChatActivity) => onActivityRef.current?.(activity), [])
   const [inFlight, setInFlight] = useState<InFlightMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -210,10 +230,12 @@ export function useStreamingChat({
       const controller = new AbortController()
       abortRef.current = controller
       let assistantId: string | null = null
+      let ok = false
+      emit({ kind: 'start' })
       try {
         let activeChatId = chatId
         if (!activeChatId) {
-          activeChatId = await createChat(controller.signal)
+          activeChatId = await createChat(controller.signal, agentId)
           if (controller.signal.aborted) return
           onChatCreated?.(activeChatId)
         }
@@ -253,10 +275,7 @@ export function useStreamingChat({
           signal: controller.signal,
         })
         if (!response.ok || !response.body) {
-          const detail = response.body
-            ? await response.text().catch(() => '')
-            : ''
-          throw new Error(detail || `Request failed: ${response.status}`)
+          throw new Error(await readError(response))
         }
 
         const serverId = response.headers.get('X-Asst-Id')
@@ -268,7 +287,8 @@ export function useStreamingChat({
           )
         }
 
-        await consumeStream(response.body, assistantId, setInFlight, setError)
+        await consumeStream(response.body, assistantId, setInFlight, setError, emit)
+        ok = true
       } catch (cause) {
         const streamError = toError(cause)
         // A local abort does not necessarily deliver an SSE `abort` event.
@@ -293,9 +313,10 @@ export function useStreamingChat({
         if (abortRef.current === controller) abortRef.current = null
         isLoadingRef.current = false
         setIsLoading(false)
+        emit({ kind: 'end', ok })
       }
     },
-    [chatId, modelId, onChatCreated],
+    [chatId, modelId, onChatCreated, agentId, emit],
   )
 
   const stop = useCallback(() => {
@@ -315,20 +336,33 @@ export function useStreamingChat({
   return { send, stop, retry, isLoading, error, inFlight }
 }
 
-async function createChat(signal: AbortSignal): Promise<string> {
+async function createChat(signal: AbortSignal, agentId?: string): Promise<string> {
   const token = await getAuthToken()
   const response = await fetch('/api/ai/chats', {
     method: 'POST',
     headers: authHeaders(token),
-    body: JSON.stringify({}),
+    body: JSON.stringify(agentId ? { agentId } : {}),
     signal,
   })
-  if (!response.ok) throw new Error(`Failed to create chat: ${response.status}`)
+  if (!response.ok) throw new Error(await readError(response))
   const data = (await response.json()) as { chat?: { recordId?: unknown } }
   if (typeof data.chat?.recordId !== 'string') {
     throw new Error('Failed to create chat: response is missing chat.recordId')
   }
   return data.chat.recordId
+}
+
+/** The worker answers `{ error, code }`; show the sentence, not raw JSON. */
+async function readError(response: Response): Promise<string> {
+  const text = await response.text().catch(() => '')
+  try {
+    const body = JSON.parse(text) as { error?: unknown }
+    if (typeof body.error === 'string' && body.error) return body.error
+  } catch {
+    // Not JSON — fall through to the raw text.
+  }
+  if (response.status === 401) return 'Please sign in to chat.'
+  return text || `Request failed: ${response.status}`
 }
 
 function authHeaders(token: string | null): Record<string, string> {
@@ -343,6 +377,7 @@ async function consumeStream(
   assistantId: string,
   setInFlight: Dispatch<SetStateAction<InFlightMessage[]>>,
   setError: Dispatch<SetStateAction<Error | null>>,
+  emit: (activity: ChatActivity) => void,
 ) {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -355,12 +390,12 @@ async function consumeStream(
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? ''
     for (const line of lines) {
-      applySseLine(line, assistantId, setInFlight, setError)
+      applySseLine(line, assistantId, setInFlight, setError, emit)
     }
   }
 
   buffer += decoder.decode()
-  applySseLine(buffer, assistantId, setInFlight, setError)
+  applySseLine(buffer, assistantId, setInFlight, setError, emit)
 }
 
 function applySseLine(
@@ -368,11 +403,13 @@ function applySseLine(
   assistantId: string,
   setInFlight: Dispatch<SetStateAction<InFlightMessage[]>>,
   setError: Dispatch<SetStateAction<Error | null>>,
+  emit: (activity: ChatActivity) => void,
 ) {
   const chunk = parseSseLine(line)
   if (!chunk) return
   const action = decodeAiStreamChunk(chunk)
   if (!action) return
+  emit({ kind: 'action', action })
 
   if (action.type === 'stream-error') {
     console.error('[chat] STREAM error', action.errorText)

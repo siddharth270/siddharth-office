@@ -18,7 +18,7 @@ import {
   workerErrorHandler,
   YjsRoom,
 } from 'deepspace/worker'
-import type { DOBindings, DOManifest, Job, JobContext } from 'deepspace/worker'
+import type { DOBindings, DOManifest, Job, JobContext, UserAttachment } from 'deepspace/worker'
 import { AI_CHATS_SCHEMA } from 'deepspace/schema'
 import { registerAgent } from './src/ai/agent.js'
 import { buildTools } from './src/ai/tools.js'
@@ -52,7 +52,24 @@ export class AppRecordRoom extends RecordRoom<Env> {
 
 export class AppYjsRoom extends YjsRoom<Env> {}
 export class AppCanvasRoom extends CanvasRoom<Env> {}
-export class AppPresenceRoom extends PresenceRoom<Env> {}
+/**
+ * Same user, several sockets (two tabs, or a reconnect racing the old socket's
+ * close): the base room removes the peer by userId on *any* close, so a stale
+ * socket closing would evict the user's live tab from everyone's office until
+ * they refresh — peers then drop that user's updates. Only announce a leave
+ * when the user's last socket goes.
+ */
+export class AppPresenceRoom extends PresenceRoom<Env> {
+  protected onDisconnect(ws: WebSocket, user: UserAttachment): void {
+    const stillConnected = this.state.getWebSockets().some((other) => {
+      if (other === ws) return false
+      const att = other.deserializeAttachment() as { userId?: string } | null
+      return att?.userId === user.userId
+    })
+    if (stillConnected) return
+    super.onDisconnect(ws, user)
+  }
+}
 
 /** Runs the scheduled tasks defined in src/cron.ts. */
 export class AppCronRoom extends CronRoom<Env> {

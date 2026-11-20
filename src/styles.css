@@ -232,3 +232,16 @@
     touch-action: manipulation;
   }
 }
+
+/* Pixel display face for headings and nameplates (Silkscreen, OFL). */
+.font-pixel {
+  font-family: 'Silkscreen', ui-monospace, monospace;
+  letter-spacing: 0.02em;
+}
+
+/* Soft lamplight behind the office canvas. */
+.office-room {
+  background:
+    radial-gradient(ellipse 70% 60% at 45% 45%, rgba(242, 181, 74, 0.07), transparent 70%),
+    var(--color-background);
+}

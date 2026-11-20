@@ -44,3 +44,31 @@
   --color-shell: #fafafa;
   --color-shell-panel: #ffffff;
 }
+
+/* Office — warm "after hours" dark: plum-navy walls, lamp-amber accent. */
+[data-theme="office"] {
+  color-scheme: dark;
+  --color-background: #17131f;
+  --color-foreground: #efe8dc;
+  --color-card: #201a2b;
+  --color-card-foreground: #efe8dc;
+  --color-popover: #221c2e;
+  --color-popover-foreground: #efe8dc;
+  --color-primary: #f2b54a;
+  --color-primary-foreground: #231a0c;
+  --color-secondary: #2a2236;
+  --color-secondary-foreground: #efe8dc;
+  --color-muted: #2a2236;
+  --color-muted-foreground: #a99fb5;
+  --color-accent: #2f2640;
+  --color-accent-foreground: #efe8dc;
+  --color-destructive: #e5675a;
+  --color-destructive-foreground: #ffffff;
+  --color-border: rgba(169, 159, 181, 0.22);
+  --color-input: rgba(169, 159, 181, 0.28);
+  --color-ring: #f2b54a;
+  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 4px 14px 0 rgba(0, 0, 0, 0.4);
+  --color-shell: #17131f;
+  --color-shell-panel: #201a2b;
+}

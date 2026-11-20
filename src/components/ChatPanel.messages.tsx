@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import {
   memo,
   useMemo,
@@ -74,20 +75,22 @@ export const MessageTurn = memo(function MessageTurn({
 export function EmptyState({
   prompts,
   onPick,
+  intro,
 }: {
   prompts: string[]
   onPick: (prompt: string) => void
+  /** Replaces the default heading + blurb. */
+  intro?: ReactNode
 }) {
   return (
     <div className="mx-auto flex h-full max-w-[28rem] flex-col items-start justify-center gap-4 px-2">
-      <div className="space-y-1">
-        <h2 className="text-[17px] font-medium tracking-tight text-foreground">
-          How can I help?
-        </h2>
-        <p className="text-[13px] leading-relaxed text-muted-foreground">
-          I can inspect collections and help update records using your permissions.
-        </p>
-      </div>
+      {intro ?? (
+        <div className="space-y-1">
+          <h2 className="text-[17px] font-medium tracking-tight text-foreground">
+            How can I help?
+          </h2>
+        </div>
+      )}
       <div className="flex flex-col gap-0.5 pt-2">
         <div className="pb-1 text-[10.5px] font-medium tracking-[0.08em] uppercase text-muted-foreground">
           Try

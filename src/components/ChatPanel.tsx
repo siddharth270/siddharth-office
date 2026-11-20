@@ -24,7 +24,7 @@ import {
 } from 'lucide-react'
 import { listDeepSpaceAgentModels, useQuery } from 'deepspace'
 import { EmptyState, MessageTurn, ThinkingIndicator } from './ChatPanel.messages'
-import { useStreamingChat } from './ChatPanel.stream'
+import { useStreamingChat, type ChatActivity } from './ChatPanel.stream'
 
 export type ModelOption = {
   id: string
@@ -66,6 +66,14 @@ export type ChatPanelProps = {
   compact?: boolean
   /** Suspends send while a parent-owned create is in flight. */
   disabled?: boolean
+  /** Office agent an auto-created chat is bound to. */
+  agentId?: string
+  /** Turn lifecycle + stream events, for the office animations. */
+  onActivity?: (activity: ChatActivity) => void
+  /** Composer placeholder. */
+  placeholder?: string
+  /** Replaces the empty state's default heading. */
+  emptyStateIntro?: ReactNode
 }
 
 const MODEL_STORAGE_KEY = 'deepspace-ai-model'
@@ -91,6 +99,10 @@ export function ChatPanel({
   header,
   compact = false,
   disabled = false,
+  agentId,
+  onActivity,
+  placeholder = 'Message the assistant…',
+  emptyStateIntro,
 }: ChatPanelProps) {
   const models = modelOptions ?? DEFAULT_MODELS
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -135,6 +147,8 @@ export function ChatPanel({
     chatId: activeChatId,
     modelId,
     onChatCreated: handleChatCreated,
+    agentId,
+    onActivity,
   })
 
   const queryWhere = useMemo(
@@ -257,7 +271,7 @@ export function ChatPanel({
         className={`min-h-0 flex-1 overflow-y-auto ${horizontalPadding} py-8`}
       >
         {messages.length === 0 ? (
-          <EmptyState prompts={emptyStatePrompts} onPick={selectPrompt} />
+          <EmptyState prompts={emptyStatePrompts} onPick={selectPrompt} intro={emptyStateIntro} />
         ) : (
           <div className={`mx-auto flex max-w-[44rem] flex-col ${turnGap}`}>
             {messages.map((message) => (
@@ -306,7 +320,7 @@ export function ChatPanel({
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={handleKeyDown}
               disabled={disabled}
-              placeholder={disabled ? 'Creating chat…' : 'Message the assistant…'}
+              placeholder={disabled ? 'Creating chat…' : placeholder}
               className="block w-full resize-none bg-transparent px-4 pt-3 pb-12 leading-[1.5] text-foreground placeholder:text-muted-foreground/60 outline-none disabled:cursor-not-allowed"
             />
 
