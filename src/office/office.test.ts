@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { keywords } from './keywords'
 import { IDLE, combine, nextActivity, settle, DONE_MS } from './activity'
-import { DESKS, SPAWN, findPath, isWalkable } from './map'
+import { DESKS, SPAWN, deskById, deskExit, findPath, isWalkable } from './map'
 import { AGENTS, OFFICE_REPOS, agentIdFromChatTitle, agentChatTitle } from './agents'
 import { paperById } from './papers'
+import { OUT_MS, RALLY_MS, SLOT_MS, SPOTS, ballAt, desiredSpot, planSlot } from './hangout'
 
 describe('keywords', () => {
   it('drops stopwords and adds topic hints', () => {
@@ -61,5 +62,53 @@ describe('roster', () => {
   })
   it('every paper agent points at a known paper', () => {
     for (const a of AGENTS.filter((x) => x.kind === 'paper')) expect(paperById(a.paperId)).toBeDefined()
+  })
+})
+
+describe('hangout', () => {
+  const ids = AGENTS.filter((a) => a.kind !== 'persona').map((a) => a.id)
+
+  it('every break spot and desk exit is walkable and reachable from every other', () => {
+    const tiles = [
+      ...Object.values(SPOTS).map((s) => s.approach),
+      ...AGENTS.flatMap((a) => (a.kind === 'persona' ? [] : [deskExit(deskById(a.desk)!)])),
+    ]
+    for (const t of tiles) expect(isWalkable(t)).toBe(true)
+    for (const a of tiles) for (const b of tiles) if (a !== b) expect(findPath(a, b)).not.toBeNull()
+  })
+
+  it('plans are deterministic and never double-book a spot or an agent', () => {
+    for (let slot = 0; slot < 200; slot++) {
+      const plan = planSlot(slot, ids)
+      expect([...plan]).toEqual([...planSlot(slot, ids)])
+      expect(new Set(plan.values()).size).toBe(plan.size)
+      const paddles = [...plan.values()].filter((s) => s.startsWith('paddle')).length
+      expect([0, 2]).toContain(paddles)
+    }
+  })
+
+  it('a needed agent stays at its desk, and its ping-pong partner comes back too', () => {
+    const now = 30_000 // inside the out-window of slot 0
+    const plan = planSlot(0, ids, true)
+    const [left] = [...plan].find(([, s]) => s === 'paddle-left')!
+    const [right] = [...plan].find(([, s]) => s === 'paddle-right')!
+    expect(desiredSpot(left, ids, now, new Set(), true)).toBe('paddle-left')
+    expect(desiredSpot(left, ids, now, new Set([left]), true)).toBeNull()
+    expect(desiredSpot(right, ids, now, new Set([left]), true)).toBeNull()
+  })
+
+  it('everyone is back at their desk for the second part of each slot', () => {
+    for (const id of ids) expect(desiredSpot(id, ids, SLOT_MS * 7 + OUT_MS + 1, new Set())).toBeNull()
+  })
+
+  it('the ball stays between the paddles during a rally', () => {
+    for (let t = 0; t < RALLY_MS * 2; t += 37) {
+      const b = ballAt(t)
+      if (!b.miss) {
+        expect(b.u).toBeGreaterThanOrEqual(0)
+        expect(b.u).toBeLessThanOrEqual(1)
+        expect(b.h).toBeGreaterThanOrEqual(0)
+      }
+    }
   })
 })

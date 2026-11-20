@@ -17,6 +17,7 @@ import {
   SPAWN,
   TILE,
   deskById,
+  deskExit,
   findPath,
   isWalkable,
   nearestWalkable,
@@ -35,6 +36,7 @@ import {
   type Hands,
 } from '../../office/sprites'
 import { settle, type AgentActivity } from '../../office/activity'
+import { SPOTS, ballAt, desiredSpot, type Spot } from '../../office/hangout'
 
 export interface VisitorView {
   userId: string
@@ -79,8 +81,66 @@ interface Mover {
 
 const AGENT_BY_DESK = new Map(AGENTS.map((a) => [a.desk, a]))
 
-function agentAt(wx: number, wy: number): OfficeAgent | null {
+/** Agents who may take breaks (the front desk stays staffed). */
+const BREAK_IDS = AGENTS.filter((a) => a.kind !== 'persona').map((a) => a.id)
+/** `?hangout` in the URL forces a game, for demos and screenshots. */
+const FORCE_HANGOUT = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('hangout')
+const AGENT_SPEED = 3.2 // tiles per second, an unhurried stroll
+
+type Waypoint = Pt & { tile: boolean }
+
+interface AgentMover extends Mover {
+  /** Where the agent is headed (or resting): its desk or a break spot. */
+  target: Spot | 'desk'
+  path: Waypoint[]
+  /** Last walkable tile reached — where any new path starts from. */
+  lastTile: Pt
+  arrived: boolean
+}
+
+function deskRest(a: OfficeAgent): { at: Pt; approach: Pt } | null {
+  const d = deskById(a.desk)
+  return d ? { at: d.seat, approach: deskExit(d) } : null
+}
+
+function newAgentMover(a: OfficeAgent, spot: Spot | null): AgentMover | null {
+  const rest = deskRest(a)
+  if (!rest) return null
+  const place = spot ? SPOTS[spot] : rest
+  return {
+    x: place.at.x,
+    y: place.at.y,
+    dir: spot ? SPOTS[spot].dir : 'down',
+    moving: false,
+    walkT: 0,
+    target: spot ?? 'desk',
+    path: [],
+    lastTile: { ...place.approach },
+    arrived: true,
+  }
+}
+
+function routeTo(m: AgentMover, a: OfficeAgent, target: Spot | 'desk'): Waypoint[] {
+  const dest = target === 'desk' ? deskRest(a) : SPOTS[target]
+  if (!dest) return []
+  const out: Waypoint[] = []
+  if (Math.abs(m.x - m.lastTile.x) > 0.01 || Math.abs(m.y - m.lastTile.y) > 0.01) {
+    out.push({ ...m.lastTile, tile: true })
+  }
+  const path = findPath(m.lastTile, dest.approach) ?? []
+  for (const p of path) out.push({ ...p, tile: true })
+  out.push({ ...dest.at, tile: false })
+  return out
+}
+
+function agentAt(wx: number, wy: number, movers: Map<string, AgentMover>): OfficeAgent | null {
   for (const a of AGENTS) {
+    const m = movers.get(a.id)
+    if (m && !(m.target === 'desk' && m.arrived)) {
+      // Away from the desk: hit-test the character itself.
+      if (wx >= m.x * TILE && wx < m.x * TILE + TILE && wy >= m.y * TILE - 10 && wy < m.y * TILE + 16) return a
+      continue
+    }
     const d = deskById(a.desk)
     if (!d) continue
     const left = d.desk.x * TILE
@@ -118,6 +178,7 @@ export function OfficeCanvas(props: OfficeCanvasProps) {
     tile: { ...SPAWN },
   })
   const peerPos = useRef(new Map<string, Mover>())
+  const agentPos = useRef(new Map<string, AgentMover>())
   const hoverRef = useRef<string | null>(null)
   const scaleRef = useRef(3)
 
@@ -191,13 +252,13 @@ export function OfficeCanvas(props: OfficeCanvasProps) {
     }
     const onClick = (e: PointerEvent) => {
       const w = toWorld(e)
-      const agent = agentAt(w.x, w.y)
+      const agent = agentAt(w.x, w.y, agentPos.current)
       if (agent) goToAgent(agent.id)
       else goToTile({ x: Math.floor(w.x / TILE), y: Math.floor(w.y / TILE) })
     }
     const onMoveMouse = (e: PointerEvent) => {
       const w = toWorld(e)
-      const agent = agentAt(w.x, w.y)
+      const agent = agentAt(w.x, w.y, agentPos.current)
       hoverRef.current = agent?.id ?? null
       canvas.style.cursor = agent ? 'pointer' : 'default'
     }
@@ -315,6 +376,55 @@ export function OfficeCanvas(props: OfficeCanvasProps) {
         }
       }
       for (const id of peerPos.current.keys()) if (!seen.has(id)) peerPos.current.delete(id)
+
+      // ---- agents: desk ⇄ break spots ----
+      const wall = Date.now()
+      const needed = new Set<string>()
+      if (p.selectedAgentId) needed.add(p.selectedAgentId)
+      for (const v of p.peers) if (v.talkingTo) needed.add(v.talkingTo)
+      for (const [id, act] of Object.entries(p.activities)) if (settle(act, wall).mode !== 'idle') needed.add(id)
+      for (const a of AGENTS) {
+        const spot = a.kind === 'persona' ? null : desiredSpot(a.id, BREAK_IDS, wall, needed, FORCE_HANGOUT)
+        let m = agentPos.current.get(a.id)
+        if (!m) {
+          // First frame: place everyone where the shared schedule says they are.
+          const fresh = newAgentMover(a, spot)
+          if (!fresh) continue
+          agentPos.current.set(a.id, fresh)
+          continue
+        }
+        const want = spot ?? 'desk'
+        if (want !== m.target) {
+          m.target = want
+          m.path = routeTo(m, a, want)
+          m.arrived = false
+        }
+        if (!m.path.length) continue
+        const target = m.path[0]
+        m.dir = dirTowards(m, target, m.dir)
+        const dx = target.x - m.x
+        const dy = target.y - m.y
+        const dist = Math.hypot(dx, dy)
+        const stepLen = AGENT_SPEED * dt
+        m.moving = true
+        m.walkT += dt
+        if (dist <= stepLen) {
+          m.x = target.x
+          m.y = target.y
+          if (target.tile) m.lastTile = { x: target.x, y: target.y }
+          m.path.shift()
+          if (!m.path.length) {
+            m.moving = false
+            m.arrived = true
+            m.dir = m.target === 'desk' ? 'down' : SPOTS[m.target].dir
+            const rest = m.target === 'desk' ? deskRest(a) : SPOTS[m.target]
+            if (rest) m.lastTile = { ...rest.approach }
+          }
+        } else {
+          m.x += (dx / dist) * stepLen
+          m.y += (dy / dist) * stepLen
+        }
+      }
     }
 
     const render = (g: CanvasRenderingContext2D, now: number) => {
@@ -342,25 +452,79 @@ export function OfficeCanvas(props: OfficeCanvasProps) {
         list.push({ y: f.y + f.h, draw: () => drawFurniture(g, f, now, glow) })
       }
 
+      const wallNow = Date.now()
+      const ball = ballAt(wallNow)
+      const players: Partial<Record<'left' | 'right', AgentMover>> = {}
       for (const a of AGENTS) {
-        const d = deskById(a.desk)
-        if (!d) continue
-        const act = settle(p.activities[a.id] ?? { mode: 'idle', at: 0 }, Date.now())
-        const hands: Hands = act.mode === 'typing' ? 'type' : act.mode === 'reading' ? 'read' : 'rest'
-        const frame = Math.floor(now / (hands === 'type' ? 110 : 450)) % 2
+        const m = agentPos.current.get(a.id)
+        if (!m) continue
+        const pal = AGENT_PALETTES[a.skin % AGENT_PALETTES.length]
         const blink = (now + a.id.length * 997) % 3800 < 140
+        const atDesk = m.target === 'desk' && m.arrived
+        if (atDesk) {
+          const act = settle(p.activities[a.id] ?? { mode: 'idle', at: 0 }, wallNow)
+          const hands: Hands = act.mode === 'typing' ? 'type' : act.mode === 'reading' ? 'read' : 'rest'
+          const frame = Math.floor(now / (hands === 'type' ? 110 : 450)) % 2
+          const sprite = characterSprite({ pal, dir: 'down', pose: 'sit', frame, hands, blink })
+          const breathe = act.mode === 'idle' && Math.floor(now / 900) % 2 ? 1 : 0
+          list.push({ y: m.y + 0.99, draw: () => g.drawImage(sprite, m.x * TILE, m.y * TILE - 12 + breathe) })
+          continue
+        }
+        const spot = m.target === 'desk' ? null : SPOTS[m.target]
+        if (m.arrived && spot?.pose === 'sit') {
+          // On the sofa: drawn just in front of it, gently swaying while chatting.
+          const sway = Math.floor((now + a.id.length * 700) / 1300) % 2
+          const sprite = characterSprite({ pal, dir: 'down', pose: 'sit', frame: 0, hands: 'rest', blink })
+          list.push({ y: m.y + 1.01, draw: () => g.drawImage(sprite, m.x * TILE, m.y * TILE - 9 + sway) })
+          continue
+        }
+        if (m.arrived && m.target === 'paddle-left') players.left = m
+        if (m.arrived && m.target === 'paddle-right') players.right = m
         const sprite = characterSprite({
-          pal: AGENT_PALETTES[a.skin % AGENT_PALETTES.length],
-          dir: 'down',
-          pose: 'sit',
-          frame,
-          hands,
+          pal,
+          dir: m.dir,
+          pose: m.moving ? 'walk' : 'stand',
+          frame: m.moving ? Math.floor(m.walkT * 7) % 2 : 0,
+          hands: 'rest',
           blink,
         })
-        const breathe = act.mode === 'idle' && Math.floor(now / 900) % 2 ? 1 : 0
+        const side = m.target === 'paddle-left' ? 'left' : m.target === 'paddle-right' ? 'right' : null
         list.push({
-          y: d.seat.y + 0.99,
-          draw: () => g.drawImage(sprite, d.seat.x * TILE, d.seat.y * TILE - 12 + breathe),
+          y: m.y + 1,
+          draw: () => {
+            g.drawImage(sprite, m.x * TILE, m.y * TILE - 8)
+            if (side && m.arrived) {
+              // paddle in the hand nearest the table, lifted on a swing
+              const swing = ball.hitter === side ? -2 : 0
+              const hx = side === 'left' ? m.x * TILE + 13 : m.x * TILE - 1
+              const hy = m.y * TILE + 3 + swing
+              g.fillStyle = '#c0392b'
+              g.fillRect(hx, hy, 4, 4)
+              g.fillStyle = '#6d4a30'
+              g.fillRect(hx + 1, hy + 4, 2, 2)
+            }
+          },
+        })
+      }
+
+      // The ball only flies once both players are at the table.
+      if (players.left && players.right) {
+        const x0 = players.left.x * TILE + 16
+        const x1 = players.right.x * TILE
+        const tableY = 4 * TILE + 8
+        const bx = x0 + (x1 - x0) * ball.u
+        list.push({
+          y: 6.05, // in front of the table (whose depth is its bottom edge, y=6)
+          draw: () => {
+            if (!ball.miss || ball.h > -10) {
+              g.globalAlpha = 0.35
+              g.fillStyle = '#10232b'
+              if (ball.u >= 0 && ball.u <= 1) g.fillRect(Math.round(bx), tableY + 2, 2, 1)
+              g.globalAlpha = 1
+              g.fillStyle = '#ffb347'
+              g.fillRect(Math.round(bx), Math.round(tableY - ball.h), 2, 2)
+            }
+          },
         })
       }
 
@@ -407,11 +571,19 @@ export function OfficeCanvas(props: OfficeCanvasProps) {
       nameTag(g, me.x * TILE + 8, me.y * TILE - 10, 'You', p.me.color, true)
 
       for (const a of AGENTS) {
-        const d = deskById(a.desk)
-        if (!d) continue
+        const m = agentPos.current.get(a.id)
+        if (!m) continue
         const act = settle(p.activities[a.id] ?? { mode: 'idle', at: 0 }, Date.now())
-        const cx = d.seat.x * TILE + 8
-        const top = d.seat.y * TILE - 14
+        const seated = m.arrived && (m.target === 'desk' || SPOTS[m.target].pose === 'sit')
+        const cx = m.x * TILE + 8
+        // Two people share the sofa: lift the second name tag so they don't overlap.
+        const top = m.y * TILE - (seated ? 14 : 10) - (m.arrived && m.target === 'sofa-b' ? 9 : 0)
+        if (players.left && players.right && ball.miss) {
+          const misser = ball.misser === 'left' ? players.left : players.right
+          if (misser === m) {
+            speech(g, cx, top - 9, 'oops!')
+          }
+        }
         const highlighted = p.selectedAgentId === a.id || hoverRef.current === a.id
         if (act.mode === 'idle') {
           nameTag(g, cx, top, a.name, highlighted ? '#f5d76e' : '#ffffff', highlighted, true)
@@ -514,3 +686,16 @@ function bubble(g: CanvasRenderingContext2D, cx: number, y: number, act: AgentAc
 }
 
 const OUTLINE_BUBBLE = '#231d2b'
+
+function speech(g: CanvasRenderingContext2D, cx: number, y: number, text: string) {
+  g.font = FONT
+  const w = Math.ceil(g.measureText(text).width) + 6
+  const x = Math.round(cx - w / 2)
+  g.fillStyle = OUTLINE_BUBBLE
+  g.fillRect(x - 1, y - 8, w + 2, 10)
+  g.fillStyle = '#ffffff'
+  g.fillRect(x, y - 7, w, 8)
+  g.fillStyle = '#231d2b'
+  g.textBaseline = 'alphabetic'
+  g.fillText(text, x + 3, y - 1.5)
+}

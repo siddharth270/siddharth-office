@@ -27,6 +27,7 @@ export type FurnitureKind =
   | 'window'
   | 'rug'
   | 'whiteboard'
+  | 'pingpong'
 
 export interface Furniture {
   kind: FurnitureKind
@@ -83,6 +84,7 @@ export const FURNITURE: Furniture[] = [
   { kind: 'plant', x: 24, y: 2, w: 1, h: 1, solid: true },
   { kind: 'plant', x: 1, y: 13, w: 1, h: 1, solid: true },
   { kind: 'plant', x: 9, y: 12, w: 1, h: 1, solid: true },
+  { kind: 'pingpong', x: 20, y: 4, w: 4, h: 2, solid: true },
   { kind: 'rug', x: 20, y: 8, w: 5, h: 5, solid: false },
   { kind: 'sofa', x: 20, y: 8, w: 3, h: 1, solid: true },
   { kind: 'table', x: 21, y: 10, w: 2, h: 1, solid: true },
@@ -168,6 +170,11 @@ export function nearestWalkable(p: Pt): Pt | null {
       }
   }
   return null
+}
+
+/** Walkable tile beside a desk's seat, where an agent steps out to stand up. */
+export function deskExit(d: DeskSlot): Pt {
+  return { x: d.desk.x + d.desk.w, y: Math.floor(d.seat.y) }
 }
 
 export function deskById(id: string): DeskSlot | undefined {

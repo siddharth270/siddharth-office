@@ -323,6 +323,30 @@ export function drawFurniture(g: G, f: Furniture, t: number, glow = 0) {
       px(g, cx + 2, y + 8, 3, 1, '#ffffff')
       break
     }
+    case 'pingpong': {
+      const h = f.h * TILE
+      // legs, then the side of the top, then the playing surface
+      px(g, x + 3, y + h - 12, 2, 10, '#3a3f4b')
+      px(g, x + w - 5, y + h - 12, 2, 10, '#3a3f4b')
+      px(g, x + w / 2 - 9, y + h - 12, 2, 9, '#3a3f4b')
+      px(g, x + w / 2 + 7, y + h - 12, 2, 9, '#3a3f4b')
+      px(g, x, y + h - 14, w, 3, '#1f4f63')
+      px(g, x, y + 1, w, h - 15, '#2c7a8f')
+      // white edge and centre line
+      px(g, x, y + 1, w, 1, '#f2f2ea')
+      px(g, x, y + h - 15, w, 1, '#f2f2ea')
+      px(g, x, y + 1, 1, h - 15, '#f2f2ea')
+      px(g, x + w - 1, y + 1, 1, h - 15, '#f2f2ea')
+      g.globalAlpha = 0.7
+      px(g, x + 1, y + 1 + Math.floor((h - 15) / 2), w - 2, 1, '#f2f2ea')
+      g.globalAlpha = 1
+      // net with posts
+      px(g, x + w / 2 - 1, y - 3, 2, h - 12, '#d9d9d0')
+      px(g, x + w / 2 - 1, y - 3, 2, 1, '#ffffff')
+      px(g, x + w / 2 - 1, y - 4, 2, 2, '#3a3f4b')
+      px(g, x + w / 2 - 1, y + h - 15, 2, 3, '#3a3f4b')
+      break
+    }
     case 'whiteboard': {
       px(g, x + 2, y + 5, w - 4, 20, '#8b8f99')
       px(g, x + 3, y + 6, w - 6, 18, '#f7f7f2')
