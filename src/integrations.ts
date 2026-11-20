@@ -26,5 +26,7 @@ export const integrations: Record<
 > = {
   google: { billing: 'user' },
   composio: { billing: 'user' },
+  // Office agents read public repos on the owner's credits (sign-in required).
+  github: { billing: 'developer' },
   // openai: { billing: 'developer', anonymous: true },
 }

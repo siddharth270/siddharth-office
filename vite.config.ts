@@ -20,6 +20,11 @@ export default defineConfig({
     // the generated app and keep local dev/test startup deterministic.
     cloudflare({
       inspectorPort: false,
+      // The [[ai_search]] binding in wrangler.toml is DeepSpace-provisioned
+      // manifest metadata — `knowledge(env)` reaches it through the platform
+      // transport, never `env.KNOWLEDGE`. Without this, Wrangler tries to open
+      // a remote Cloudflare session for it in dev and demands a CF API token.
+      remoteBindings: false,
     }),
     // The app id `define`, the preview-secret cleanup, and the client dedupe
     // hint — all shipped by the SDK so a fix to any of them arrives with a

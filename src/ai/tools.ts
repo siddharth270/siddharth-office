@@ -11,7 +11,9 @@ import { jsonSchema, tool } from 'ai'
 import type { ToolSet } from 'ai'
 import { z } from 'zod/v4'
 import { BUILT_IN_TOOLS, applyAiToolDefaults } from 'deepspace/worker'
-import type { ToolSchema, CollectionSchema } from 'deepspace/worker'
+import type { AgentToolContext, ToolSchema, CollectionSchema } from 'deepspace/worker'
+import { buildOfficeTools } from './office-tools.js'
+import type { Env } from '../../worker.js'
 
 type ToolExecutor = (toolName: string, params: Record<string, unknown>) => Promise<unknown>
 
@@ -77,8 +79,10 @@ export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]):
 // Tool definitions
 // ============================================================================
 
-export function buildTools(executor: ToolExecutor): ToolSet {
-  const tools: ToolSet = {}
+export function buildTools(executor: ToolExecutor, context?: AgentToolContext<Env>): ToolSet {
+  // Office tools need the request's bindings; the chat route and the local
+  // agent routes both pass `context`.
+  const tools: ToolSet = context ? buildOfficeTools(context) : {}
 
   for (const def of BUILT_IN_TOOLS) {
     if (!ALLOWED_TOOL_NAMES.includes(def.name)) continue

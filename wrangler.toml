@@ -64,6 +64,10 @@ bindings = [
 # binding = "KNOWLEDGE"
 # instance_name = "auto"
 #
+[[ai_search]]
+binding = "KNOWLEDGE"
+instance_name = "auto"
+
 # Full reference, behavior, and pricing:
 #   https://docs.deep.space/bindings/knowledge
 

@@ -142,6 +142,11 @@ registerActionRoutes(app, resolveAuth)
 registerAgent(app, {
   tools: buildTools,
   inApp: schemas.some((schema) => schema.name === AI_CHATS_SCHEMA.name),
+  // Office tools spend the owner's credits. The website chat (/api/ai/*) is
+  // open to any signed-in member because its route enforces DAILY_TURN_CAP;
+  // the uncapped local-agent/MCP tool surface is the owner's alone.
+  authorize: ({ userId, request, env }) =>
+    new URL(request.url).pathname.startsWith('/api/ai/') || userId === env.OWNER_USER_ID,
 })
 registerPlatformProxyRoutes(app)
 registerStaticRoutes(app)

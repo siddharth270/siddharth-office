@@ -12,9 +12,11 @@ import { usersSchema } from './schemas/users-schema'
 import { settingsSchema } from './schemas/admin-schema'
 
 import { aiChatSchemas } from './schemas/ai-chat-schema'
+import { officeSchemas } from './schemas/office-schema'
 
 export const schemas: CollectionSchema[] = [
   ...aiChatSchemas,
   usersSchema,
   settingsSchema,
+  ...officeSchemas,
 ]

@@ -34,8 +34,16 @@ import {
   loggableError,
 } from 'deepspace/worker'
 import type { AgentToolAccessResult, AgentToolRouteOptions, ChatTurn } from 'deepspace/worker'
-import { schemas } from '../schemas.js'
-import { buildSystemPrompt } from './tools.js'
+import { buildAgentSystemPrompt } from './office-prompts.js'
+import { toolNamesFor } from './office-tools.js'
+import { createActionTools } from '../server/action-routes.js'
+import {
+  DAILY_TURN_CAP,
+  OFFICE_MODEL_ID,
+  agentById,
+  agentChatTitle,
+  agentIdFromChatTitle,
+} from '../office/agents.js'
 // Type-only — TypeScript strips these at runtime, so no circular import
 // with worker.ts (which imports `registerAiChatRoutes` from this file).
 import type { Env, AppContext } from '../../worker.js'
@@ -68,6 +76,31 @@ function deriveTitle(content: string): string {
   return first.length <= 50 ? first : first.slice(0, 47).trimEnd() + '…'
 }
 
+/**
+ * Owner-paid spend control: count one turn per visitor per UTC day *before*
+ * streaming (aborted turns still count, so abort-spam can't dodge the cap).
+ * Read-then-write is not atomic — two simultaneous tabs can each squeeze one
+ * extra turn past the cap. That's an accepted soft edge for a cost guard.
+ */
+async function takeDailyTurn(
+  env: Env,
+  userId: string,
+  jwt: string,
+): Promise<{ ok: true; used: number } | { ok: false; used: number }> {
+  if (userId === env.OWNER_USER_ID) return { ok: true, used: 0 }
+  const tools = createActionTools(env, userId, jwt)
+  const day = new Date().toISOString().slice(0, 10)
+  const id = `${userId}:${day}`
+  const existing = await tools.get('chat-usage', id)
+  const used = existing.success
+    ? Number((existing.data as { record?: { data?: { turns?: number } } }).record?.data?.turns ?? 0)
+    : 0
+  if (used >= DAILY_TURN_CAP) return { ok: false, used }
+  const write = await tools.create('chat-usage', { userId, day, turns: used + 1 }, id)
+  if (!write.success) throw new Error(`chat-usage write failed: ${write.error}`)
+  return { ok: true, used: used + 1 }
+}
+
 export function registerAiChatRoutes(
   app: Hono<AppContext>,
   resolveAccess: ResolveAccess,
@@ -92,11 +125,16 @@ export function registerAiChatRoutes(
     if (access instanceof Response) return access
     const { auth } = access
 
-    const body = await c.req.json<{ title?: string }>().catch(() => ({}) as { title?: string })
+    // Every chat belongs to exactly one office agent, recorded server-side in
+    // the title (`agent:<id>`) — the existing ai-chats schema carries it with
+    // no extra collection, and the turn route trusts only this stored value.
+    const body = await c.req
+      .json<{ agentId?: string }>()
+      .catch(() => ({}) as { agentId?: string })
+    const agent = agentById(body.agentId)
+    if (!agent) return c.json({ error: 'Unknown agentId', code: 'unknown_agent' }, 400)
     const stub = recordRoomStub(c.env)
-    const chat = await createChat(stub, auth.userId, {
-      title: body.title ?? 'New chat',
-    })
+    const chat = await createChat(stub, auth.userId, { title: agentChatTitle(agent.id) })
     return c.json({ chat })
   })
 
@@ -111,6 +149,10 @@ export function registerAiChatRoutes(
     const chat = await getChat(stub, id, auth.userId)
     if (!chat) return c.json({ error: 'Not found' }, 404)
 
+    // The title is the chat's agent binding, so it is not user-editable.
+    if (agentIdFromChatTitle(chat.title)) {
+      return c.json({ error: 'Agent chats cannot be renamed', code: 'immutable_title' }, 400)
+    }
     const body = await c.req.json<{ title?: string }>().catch(() => ({}) as { title?: string })
     const patch: { title?: string } = {}
     if (typeof body.title === 'string') patch.title = body.title
@@ -165,13 +207,16 @@ export function registerAiChatRoutes(
     if (content.length > MAX_USER_CONTENT_LENGTH) {
       return c.json({ error: `content exceeds ${MAX_USER_CONTENT_LENGTH} chars` }, 413)
     }
-    const selectedModel = resolveDeepSpaceAgentModel(modelId, 'application')
+    // Owner pays, so the server picks the model; a client-sent modelId is
+    // accepted for wire compatibility and ignored.
+    void modelId
+    const selectedModel = resolveDeepSpaceAgentModel(OFFICE_MODEL_ID, 'application')
     if (!selectedModel) {
       // Name the valid ids: the caller has no other way to learn them here.
       const modelIds = listDeepSpaceAgentModels('application').map((model) => model.id)
       return c.json(
         {
-          error: `Unknown modelId: ${modelId}. Valid: ${modelIds.join(', ')}`,
+          error: `Office model ${OFFICE_MODEL_ID} is not in this SDK's catalog. Valid: ${modelIds.join(', ')}`,
           code: 'unknown_model',
           modelIds,
         },
@@ -184,6 +229,20 @@ export function registerAiChatRoutes(
     if (!chat) {
       console.warn('[ai-chat] REQUEST chat-not-found', { userId: auth.userId, chatId })
       return c.json({ error: 'Chat not found' }, 404)
+    }
+    const agent = agentById(agentIdFromChatTitle(chat.title))
+    if (!agent) return c.json({ error: 'Chat is not bound to an office agent', code: 'unknown_agent' }, 400)
+
+    const quota = await takeDailyTurn(c.env, auth.userId, jwt)
+    if (!quota.ok) {
+      return c.json(
+        {
+          error: `You've used today's ${DAILY_TURN_CAP} messages. Come back tomorrow!`,
+          code: 'daily_cap',
+          cap: DAILY_TURN_CAP,
+        },
+        429,
+      )
     }
 
     // Load history before writing this turn. `persistTurn` later writes user then
@@ -220,8 +279,8 @@ export function registerAiChatRoutes(
         ? { text: chat.compactedSummary, throughId: chat.compactedThroughId }
         : undefined
 
-    // User-billed: compaction is part of the user's chat experience, not infra.
-    const summarizer = makeDefaultSummarizer(c.env, { authToken: jwt })
+    // Owner-billed like the turn itself (no authToken → APP_OWNER_JWT).
+    const summarizer = makeDefaultSummarizer(c.env)
     const { messages: prepared, newSummary } = await prepareMessagesWithCompaction(
       turns,
       DEFAULT_CONTEXT_CONFIG,
@@ -240,7 +299,7 @@ export function registerAiChatRoutes(
       provider: selectedModel.provider,
       modelId: usedModelId,
     }
-    const baseSystem = buildSystemPrompt(c.env.APP_NAME, schemas)
+    const baseSystem = buildAgentSystemPrompt(agent)
 
     // Compaction inserts at most one summary system message at index 0; fold
     // it into the top-level `system` so we don't pass two system roles. Then
@@ -257,9 +316,14 @@ export function registerAiChatRoutes(
     // mid-stream. The local assistant routes use the same executor and
     // context, and streamDeepSpaceAgent caps each tool result for the model,
     // keeping both surfaces' tool behavior identical.
-    const tools = buildTools(
+    const allTools = buildTools(
       createUserToolExecutor(c.env, auth.userId, c.req.raw.signal, { room: access.room }),
       { env: c.env, userId: auth.userId, request: c.req.raw },
+    )
+    // Each agent gets only its read-only office tools — never records.* or
+    // the owner-only profile_upload/profile_list.
+    const tools = Object.fromEntries(
+      toolNamesFor(agent).flatMap((name) => (allTools[name] ? [[name, allTools[name]]] : [])),
     )
 
     // Allocate the assistant row id BEFORE streaming starts so we can echo it
@@ -351,7 +415,8 @@ export function registerAiChatRoutes(
     const { result } = streamDeepSpaceAgent(c.env, {
       profile: 'application',
       modelId: usedModelId,
-      authToken: jwt,
+      // No authToken: the app owner pays (APP_OWNER_JWT); the daily cap above
+      // is what bounds that spend.
       instructions: systemText,
       messages,
       tools,
