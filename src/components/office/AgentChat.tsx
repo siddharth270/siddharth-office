@@ -10,6 +10,7 @@ import { X } from 'lucide-react'
 import { ChatPanel } from '../ChatPanel'
 import type { ChatActivity } from '../ChatPanel.stream'
 import { agentChatTitle, DAILY_TURN_CAP, type OfficeAgent } from '../../office/agents'
+import { paperById } from '../../office/papers'
 import { AGENT_PALETTES } from '../../office/sprites'
 
 interface AgentChatProps {
@@ -50,6 +51,19 @@ export function AgentChat({ agent, userId, turnsUsed, onClose, onActivity }: Age
                   rel="noreferrer"
                 >
                   repo
+                </a>
+              </>
+            )}
+            {agent.paperId && (
+              <>
+                {' · '}
+                <a
+                  className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+                  href={paperById(agent.paperId)?.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  paper
                 </a>
               </>
             )}

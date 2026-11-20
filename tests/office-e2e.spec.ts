@@ -70,4 +70,21 @@ test.describe('office', () => {
     await expect(chat.getByRole('log')).toContainText(/football|hockey|tennis/i, { timeout: 90000 })
     if (SHOTS) await alice.page.screenshot({ path: `${SHOTS}/alice-answer.png` })
   })
+
+  test('live turn: a research agent answers from its paper', async ({ users }) => {
+    test.skip(!process.env.OFFICE_LIVE_CHAT, 'Spends owner credits; opt in with OFFICE_LIVE_CHAT=1')
+    test.setTimeout(120_000)
+    const [alice] = await users(1)
+    await alice.page.goto('/home')
+    await alice.page.getByTestId('agent-roster').getByRole('button', { name: /Kai/ }).click()
+    const chat = alice.page.getByTestId('agent-chat')
+    const box = chat.getByPlaceholder('Ask Kai…')
+    await expect(box).toBeVisible({ timeout: 15000 })
+    await box.fill('Which landmark does your abstract use as an example? Just name it.')
+    await box.press('Enter')
+
+    // Only the abstract (via paper_details) mentions this landmark.
+    await expect(chat.getByRole('log')).toContainText(/Qutub Minar/i, { timeout: 90000 })
+    if (SHOTS) await alice.page.screenshot({ path: `${SHOTS}/kai-answer.png` })
+  })
 })

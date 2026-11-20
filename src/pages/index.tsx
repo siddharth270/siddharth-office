@@ -20,6 +20,11 @@ const DESKS = [
     body: 'Each desk works on one of my GitHub repos. Ask how it works or what changed this week — they read the README, the code and recent commits live.',
   },
   {
+    name: 'Research desks',
+    role: 'One per paper',
+    body: 'Two agents look after my peer-reviewed papers on finding untagged places with NLP and geospatial clustering. Ask what they found and how.',
+  },
+  {
     name: 'Other visitors',
     role: 'Live',
     body: "Everyone in the office is on the same floor. You'll see other people walk around, and every agent visibly reads, types and answers in real time.",
@@ -56,7 +61,7 @@ export default function Landing() {
             <h2 id="who" className="font-pixel text-[13px] text-muted-foreground">
               Who&apos;s in the room
             </h2>
-            <ul className="grid gap-4 sm:grid-cols-3">
+            <ul className="grid gap-4 sm:grid-cols-2">
               {DESKS.map((d) => (
                 <li key={d.name} className="rounded-lg border border-border bg-card/60 p-4">
                   <p className="text-[15px] font-medium">{d.name}</p>

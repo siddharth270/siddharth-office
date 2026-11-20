@@ -12,6 +12,7 @@ import { tool } from 'ai'
 import type { ToolSet } from 'ai'
 import { z } from 'zod/v4'
 import { knowledge } from 'deepspace/worker'
+import { PAPER_IDS, paperById } from '../office/papers.js'
 import type { AgentToolContext } from 'deepspace/worker'
 import { createActionTools } from '../server/action-routes.js'
 import { GITHUB_USER, OFFICE_REPOS, type OfficeAgent } from '../office/agents.js'
@@ -208,6 +209,13 @@ export function buildOfficeTools(context: AgentToolContext<Env>): ToolSet {
       },
     }),
 
+    paper_details: tool({
+      description:
+        "Get one of Siddharth's peer-reviewed papers: title, authors, venue, date, DOI link, published abstract, and how it relates to his other paper. The abstract is the deepest source available (both papers are closed access).",
+      inputSchema: z.object({ paper: z.enum(PAPER_IDS) }),
+      execute: async ({ paper }) => paperById(paper)!,
+    }),
+
     profile_search: tool({
       description:
         "Search Siddharth's resume and personal profile (experience, education, projects, publications, skills, hobbies). Always search before answering a question about him.",
@@ -308,8 +316,17 @@ const PROJECT_TOOLS = [
   'github_file_tree',
   'github_read_file',
 ]
-const PERSONA_TOOLS = ['profile_search', 'github_profile_repos', 'github_repo_overview', 'github_readme']
+const PERSONA_TOOLS = [
+  'profile_search',
+  'paper_details',
+  'github_profile_repos',
+  'github_repo_overview',
+  'github_readme',
+]
+const PAPER_TOOLS = ['paper_details']
 
 export function toolNamesFor(agent: OfficeAgent): string[] {
-  return agent.kind === 'persona' ? PERSONA_TOOLS : PROJECT_TOOLS
+  if (agent.kind === 'persona') return PERSONA_TOOLS
+  if (agent.kind === 'paper') return PAPER_TOOLS
+  return PROJECT_TOOLS
 }

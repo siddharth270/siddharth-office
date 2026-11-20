@@ -225,7 +225,7 @@ export default function OfficePage() {
                   style={{ background: AGENT_PALETTES[a.skin % AGENT_PALETTES.length].shirt }}
                 />
                 <span className="font-medium">{a.name}</span>
-                <span className="hidden sm:inline">· {a.kind === 'persona' ? 'about me' : a.repo?.repo}</span>
+                <span className="hidden sm:inline">· {a.kind === 'persona' ? 'about me' : a.kind === 'paper' ? 'research' : a.repo?.repo}</span>
                 {talkingCounts[a.id] ? (
                   <span className="rounded bg-muted px-1 text-[10px]">{talkingCounts[a.id]} chatting</span>
                 ) : null}

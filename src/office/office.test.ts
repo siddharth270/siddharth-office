@@ -3,6 +3,7 @@ import { keywords } from './keywords'
 import { IDLE, combine, nextActivity, settle, DONE_MS } from './activity'
 import { DESKS, SPAWN, findPath, isWalkable } from './map'
 import { AGENTS, OFFICE_REPOS, agentIdFromChatTitle, agentChatTitle } from './agents'
+import { paperById } from './papers'
 
 describe('keywords', () => {
   it('drops stopwords and adds topic hints', () => {
@@ -57,5 +58,8 @@ describe('roster', () => {
   })
   it('only project agents contribute repos', () => {
     expect(OFFICE_REPOS.length).toBe(AGENTS.filter((a) => a.kind === 'project').length)
+  })
+  it('every paper agent points at a known paper', () => {
+    for (const a of AGENTS.filter((x) => x.kind === 'paper')) expect(paperById(a.paperId)).toBeDefined()
   })
 })
