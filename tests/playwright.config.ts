@@ -15,7 +15,10 @@ const PORT = Number(process.env.DEEPSPACE_PORT ?? 5173)
 // Local Network Access checks to top-level `localhost` navigation in an agent
 // container; the explicit loopback address keeps the browser and Vite on the
 // same local origin without relying on hostname classification.
-const BASE_URL = `http://127.0.0.1:${PORT}`
+// OFFICE_BASE_URL=https://siddharth-office.app.space runs specs against the
+// deployed app (live smoke) and skips the local server.
+const REMOTE = process.env.OFFICE_BASE_URL
+const BASE_URL = REMOTE ?? `http://127.0.0.1:${PORT}`
 
 export default defineConfig({
   testDir: '.',
@@ -27,7 +30,7 @@ export default defineConfig({
     headless: true,
     launchOptions: chromiumLaunchOptions(),
   },
-  webServer: {
+  webServer: REMOTE ? undefined : {
     // Bind the local test server directly. A bare `--host` asks Vite to
     // enumerate every interface, which fails in restricted containers before
     // the app can start (`uv_interface_addresses`).

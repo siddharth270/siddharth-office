@@ -10,6 +10,8 @@
 import { test, expect } from 'deepspace/testing'
 
 const SHOTS = process.env.OFFICE_SHOTS_DIR
+// Other specs' users can share the room while workers run in parallel.
+const AT_LEAST_TWO = /\b([2-9]|\d{2,}) here now/
 
 test.describe('office', () => {
   test('two visitors see each other and can open an agent chat', async ({ users }) => {
@@ -20,14 +22,14 @@ test.describe('office', () => {
     await expect(bob.page.getByTestId('office-canvas')).toBeVisible()
 
     // Presence: both count each other.
-    await expect(alice.page.getByTestId('online-count')).toHaveText(/2 here now/, { timeout: 15000 })
-    await expect(bob.page.getByTestId('online-count')).toHaveText(/2 here now/, { timeout: 15000 })
+    await expect(alice.page.getByTestId('online-count')).toHaveText(AT_LEAST_TWO, { timeout: 15000 })
+    await expect(bob.page.getByTestId('online-count')).toHaveText(AT_LEAST_TWO, { timeout: 15000 })
 
     // Roster → walk to Milo's desk → chat opens on arrival.
     await alice.page.getByTestId('agent-roster').getByRole('button', { name: /Milo/ }).click()
     const chat = alice.page.getByTestId('agent-chat')
     await expect(chat).toBeVisible({ timeout: 15000 })
-    await expect(chat.getByRole('heading', { name: 'Milo' })).toBeVisible()
+    await expect(chat.getByRole('heading', { name: 'Milo', exact: true })).toBeVisible()
     await expect(chat.getByPlaceholder('Ask Milo…')).toBeVisible()
 
     // Bob sees that someone is chatting with Milo.
@@ -50,7 +52,7 @@ test.describe('office', () => {
     const [alice, bob] = await users(2)
     await alice.page.goto('/home')
     await bob.page.goto('/home')
-    await expect(alice.page.getByTestId('online-count')).toHaveText(/2 here now/, { timeout: 15000 })
+    await expect(alice.page.getByTestId('online-count')).toHaveText(AT_LEAST_TWO, { timeout: 15000 })
 
     await alice.page.getByTestId('agent-roster').getByRole('button', { name: /Siddharth/ }).click()
     const chat = alice.page.getByTestId('agent-chat')

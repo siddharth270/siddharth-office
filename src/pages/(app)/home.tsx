@@ -74,11 +74,27 @@ export default function OfficePage() {
     },
     [updateState],
   )
-  // On (re)connect the room forgets us — re-announce everything.
+  // The room can forget or blank our state: on reconnect, when it wakes from
+  // hibernation (peers are recovered with empty state), or when this account
+  // opens a second tab (the new socket resets the shared peer entry). So
+  // re-announce the full state on connect, whenever someone new appears, and
+  // on a slow heartbeat. Each message is ~100 bytes.
+  const talkState = useRef<Record<string, unknown>>({})
+  talkState.current = { talkingTo: selected, act: myAct?.act ?? null }
+  // Position lives in a ref (moves don't re-render), so merge it at send time.
+  const announce = useCallback(
+    () => updateState({ ...lastMove.current, ...talkState.current }),
+    [updateState],
+  )
+  const peerIds = peers.map((p) => p.userId).sort().join(',')
+  useEffect(() => {
+    if (connected) announce()
+  }, [connected, peerIds, announce])
   useEffect(() => {
     if (!connected) return
-    updateState({ ...lastMove.current, talkingTo: selected, act: myAct?.act ?? null })
-  }, [connected])
+    const t = setInterval(announce, 10_000)
+    return () => clearInterval(t)
+  }, [connected, announce])
   useEffect(() => {
     updateState({ talkingTo: selected })
   }, [selected, updateState])
@@ -106,6 +122,7 @@ export default function OfficePage() {
   const visitors: VisitorView[] = useMemo(
     () =>
       peers
+        .filter((p) => p.userId !== userId) // my own second tab
         .map((p): VisitorView | null => {
           const s = readPeer(p.state)
           if (s.x === undefined || s.y === undefined) return null
@@ -120,7 +137,7 @@ export default function OfficePage() {
           }
         })
         .filter((v): v is VisitorView => v !== null),
-    [peers],
+    [peers, userId],
   )
 
   const now = Date.now()

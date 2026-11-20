@@ -287,21 +287,6 @@ export function buildOfficeTools(context: AgentToolContext<Env>): ToolSet {
       },
     }),
 
-    profile_debug_search: tool({
-      description: 'OWNER ONLY (temporary diagnostics). Raw knowledge search with explicit options.',
-      inputSchema: z.object({
-        query: z.string(),
-        mode: z.enum(['hybrid', 'semantic', 'fulltext']).optional(),
-        matchThreshold: z.number().optional(),
-        queryRewrite: z.boolean().optional(),
-      }),
-      execute: async ({ query, mode, matchThreshold, queryRewrite }) => {
-        if (userId !== env.OWNER_USER_ID) throw new Error('Forbidden: owner only')
-        const r = await knowledge(env).search(query, { mode, matchThreshold, queryRewrite, limit: 5, folder: KNOWLEDGE_FOLDER })
-        return { queryKind: r.queryKind, chunks: r.chunks.map((c) => ({ score: Number(c.score.toFixed(3)), file: c.filename ?? c.key })) }
-      },
-    }),
-
     profile_list: tool({
       description: 'OWNER ONLY. List documents in the profile knowledge base with indexing status.',
       inputSchema: z.object({}),
